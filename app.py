@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,18 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.benchmark_quality import (
+    DATASET_QUALITY_TOOLTIP,
+    build_csv_template,
+    checklist_summary,
+    evaluate_benchmark_replacement_readiness,
+)
+from src.csv_contract import (
+    CANDIDATE_CSV_HELP,
+    build_candidate_csv_template,
+    evaluate_candidate_csv_checklist,
+    load_candidate_csv_text,
+)
 from src.data_io import (
     load_benchmark_file,
     load_candidate_json_text,
@@ -33,10 +46,13 @@ def main() -> None:
         layout="wide",
     )
     st.title("Levels.fyi Crowdsourced Submission Validation")
+    st.caption(
+    "Four-layer validation MVP using rule checks, statistical validation, ML anomaly detection, and trust scoring."
+)
 
     controls = render_sidebar_controls()
     candidate_text = render_candidate_editor()
-    benchmark_df = render_benchmark_editor()
+    benchmark_df = render_benchmark_editor(controls.min_ml_rows)
 
     candidates = parse_candidates(candidate_text)
     if not candidates:
@@ -100,10 +116,27 @@ def render_control(container: Any, control: dict[str, Any]) -> Any:
 
 def render_candidate_editor() -> str:
     st.subheader("Candidate Submission")
-    uploaded = st.file_uploader("Upload sample JSON", type=["json"])
+    st.download_button(
+        "Download candidate CSV template",
+        data=build_candidate_csv_template(),
+        file_name="candidate_submission_template.csv",
+        mime="text/csv",
+        help=CANDIDATE_CSV_HELP,
+        key="candidate_csv_template",
+    )
+    uploaded = st.file_uploader(
+        "Upload candidate JSON or CSV",
+        type=["json", "csv"],
+        help=CANDIDATE_CSV_HELP,
+    )
     if uploaded is not None:
-        source_text = uploaded.getvalue().decode("utf-8")
         source_name = uploaded.name
+        uploaded_text = uploaded.getvalue().decode("utf-8")
+        if uploaded.name.lower().endswith(".csv"):
+            render_candidate_csv_checklist(uploaded_text)
+            source_text = json.dumps(load_candidate_csv_text(uploaded_text), indent=2)
+        else:
+            source_text = uploaded_text
     elif DEFAULT_SAMPLE_PATH.exists():
         source_text = DEFAULT_SAMPLE_PATH.read_text(encoding="utf-8")
         source_name = str(DEFAULT_SAMPLE_PATH)
@@ -115,17 +148,57 @@ def render_candidate_editor() -> str:
     return st.text_area(
         "Edit candidate JSON",
         value=format_json_text(source_text),
-        height=360,
+        height=260,
         key=f"candidate_json_{source_name}",
     )
 
 
-def render_benchmark_editor() -> pd.DataFrame:
+def render_candidate_csv_checklist(csv_text: str) -> None:
+    try:
+        frame = pd.read_csv(StringIO(csv_text))
+    except Exception as exc:
+        st.error(f"Candidate CSV could not be read: {exc}")
+        return
+
+    checklist = evaluate_candidate_csv_checklist(frame)
+    rows = [
+        {
+            "MoSCoW": item.moscow,
+            "Auto check": "PASS" if item.passed else "FAIL",
+            "Requirement": item.label,
+            "Detail": item.detail,
+        }
+        for item in checklist
+    ]
+    must_failed = [item for item in checklist if item.moscow == "Must" and not item.passed]
+    with st.expander("Candidate CSV readiness checklist", expanded=True):
+        st.caption("Auto-checked MoSCoW requirements before converting CSV rows into candidate JSON.")
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        if must_failed:
+            st.error("Fix failed Must checks before using this candidate CSV for validation.")
+        else:
+            st.success("All Must checks passed. Candidate CSV has been converted into editable JSON.")
+
+
+def render_benchmark_editor(min_ml_pass_rows: int) -> pd.DataFrame:
     st.subheader("Validated Benchmark Data")
-    uploaded = st.file_uploader("Upload validated submissions Excel or CSV", type=["xlsx", "xls", "csv"])
+    st.download_button(
+        "Download CSV template",
+        data=build_csv_template(),
+        file_name="validated_submissions_template.csv",
+        mime="text/csv",
+        help=DATASET_QUALITY_TOOLTIP,
+        key="benchmark_csv_template",
+    )
+    uploaded = st.file_uploader(
+        "Upload replacement benchmark CSV or Excel",
+        type=["csv", "xlsx", "xls"],
+        help=DATASET_QUALITY_TOOLTIP,
+    )
     if uploaded is not None:
         raw = load_benchmark_file(uploaded, uploaded.name)
         source_name = uploaded.name
+        render_replacement_checklist(raw, min_ml_pass_rows)
     elif DEFAULT_BENCHMARK_PATH.exists():
         raw = load_benchmark_file(DEFAULT_BENCHMARK_PATH)
         source_name = str(DEFAULT_BENCHMARK_PATH)
@@ -143,6 +216,37 @@ def render_benchmark_editor() -> pd.DataFrame:
         key=f"benchmark_editor_{source_name}",
     )
     return normalize_benchmark_dataframe(edited)
+
+
+def render_replacement_checklist(raw: pd.DataFrame, min_ml_pass_rows: int) -> None:
+    checklist = evaluate_benchmark_replacement_readiness(raw, min_ml_pass_rows=min_ml_pass_rows)
+    rows = [
+        {
+            "MoSCoW": item.moscow,
+            "Auto check": "PASS" if item.passed else "FAIL",
+            "Requirement": item.title,
+            "Detail": item.detail,
+        }
+        for item in checklist
+    ]
+    summary = checklist_summary(checklist)
+    must_failed = [item for item in checklist if item.moscow == "MUST" and not item.passed]
+
+    with st.expander("Replacement readiness checklist for validated_submissions", expanded=True):
+        st.caption(
+            "Auto-checked MoSCoW requirements for using this upload as the active validated submissions dataset."
+        )
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        st.write(
+            "Passed checks: "
+            + ", ".join(f"{label}: {count}" for label, count in sorted(summary.items()))
+        )
+        if must_failed:
+            st.error(
+                "Fix failed MUST checks before relying on this upload as a validated submissions replacement."
+            )
+        else:
+            st.success("All MUST checks passed. This upload can replace validated_submissions for this session.")
 
 
 def parse_candidates(candidate_text: str) -> list[dict[str, Any]]:
@@ -169,24 +273,50 @@ def render_report(
 
     with tab_report:
         col1, col2, col3, col4 = st.columns(4)
+
         col1.metric("Final score", f"{result.final_score:.2f}")
         col2.metric("Route", result.route)
         col3.metric("Confidence", result.confidence)
         col4.metric("Candidate total", f"{number(candidate.get('totalCompensation')):,.0f}")
 
-        st.plotly_chart(score_gauge(result.final_score), width="stretch")
+        if result.route.startswith("PASS"):
+
+            st.success("This submission looks reliable and can be published.")
+        elif result.route.startswith("FLAG"):
+
+            st.warning("This submission needs manual review before publishing.")
+        else:
+            st.error("This submission should be rejected or quarantined.")
+
+            st.plotly_chart(score_gauge(result.final_score), use_container_width=True)
 
         if result.issues:
             st.error("Issues detected: " + ", ".join(result.issues))
         else:
             st.success("No hard issues detected by the active controls.")
+
         if result.warnings:
             for warning in result.warnings:
                 st.warning(warning)
 
+        st.subheader("Why this result?")
+
+        if result.issues:
+            st.write("Main issues found:")
+        for issue in result.issues:
+            st.write(f"- {issue}")
+        else:
+            st.write("- No hard validation issues were detected.")
+
+        if result.warnings:
+            st.write("Warnings:")
+            for warning in result.warnings:
+                st.write(f"- {warning}")
+
         st.write("Recommendations")
         for item in result.recommendations:
             st.write(f"- {item}")
+     
 
     with tab_layers:
         multipliers = pd.DataFrame(
