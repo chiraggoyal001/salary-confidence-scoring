@@ -595,3 +595,10 @@ project venv instead:
 - Layer 2 approximates a time-series database with the active benchmark table.
 - Layer 3 explanations depend on SHAP runtime support.
 - The original workspace is not a git repository.
+
+
+## Links to Our Approach
+- https://docs.google.com/document/d/1vV-a-LDN07vghi3p6PLRdNuMMi9vdupSwMY_ThO7EXQ/edit?usp=drive_link
+
+## Demo Link
+- https://drive.google.com/file/d/1YLst3ryzfmfOvnj88Oext1GCSqi2ZDZh/view?usp=sharing
