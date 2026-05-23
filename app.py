@@ -46,6 +46,9 @@ def main() -> None:
         layout="wide",
     )
     st.title("Levels.fyi Crowdsourced Submission Validation")
+    st.caption(
+    "Four-layer validation MVP using rule checks, statistical validation, ML anomaly detection, and trust scoring."
+)
 
     controls = render_sidebar_controls()
     candidate_text = render_candidate_editor()
@@ -145,7 +148,7 @@ def render_candidate_editor() -> str:
     return st.text_area(
         "Edit candidate JSON",
         value=format_json_text(source_text),
-        height=360,
+        height=260,
         key=f"candidate_json_{source_name}",
     )
 
@@ -270,24 +273,50 @@ def render_report(
 
     with tab_report:
         col1, col2, col3, col4 = st.columns(4)
+
         col1.metric("Final score", f"{result.final_score:.2f}")
         col2.metric("Route", result.route)
         col3.metric("Confidence", result.confidence)
         col4.metric("Candidate total", f"{number(candidate.get('totalCompensation')):,.0f}")
 
-        st.plotly_chart(score_gauge(result.final_score), width="stretch")
+        if result.route.startswith("PASS"):
+
+            st.success("This submission looks reliable and can be published.")
+        elif result.route.startswith("FLAG"):
+
+            st.warning("This submission needs manual review before publishing.")
+        else:
+            st.error("This submission should be rejected or quarantined.")
+
+            st.plotly_chart(score_gauge(result.final_score), use_container_width=True)
 
         if result.issues:
             st.error("Issues detected: " + ", ".join(result.issues))
         else:
             st.success("No hard issues detected by the active controls.")
+
         if result.warnings:
             for warning in result.warnings:
                 st.warning(warning)
 
+        st.subheader("Why this result?")
+
+        if result.issues:
+            st.write("Main issues found:")
+        for issue in result.issues:
+            st.write(f"- {issue}")
+        else:
+            st.write("- No hard validation issues were detected.")
+
+        if result.warnings:
+            st.write("Warnings:")
+            for warning in result.warnings:
+                st.write(f"- {warning}")
+
         st.write("Recommendations")
         for item in result.recommendations:
             st.write(f"- {item}")
+     
 
     with tab_layers:
         multipliers = pd.DataFrame(
