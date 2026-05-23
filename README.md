@@ -157,8 +157,13 @@ The app currently runs on port `8501`.
 
 ### Candidate Submission
 
-Use the first upload control to provide a candidate JSON file. If no file is
-uploaded, the app loads `C:\Users\Acer\Downloads\sample.json`.
+Use the first upload control to provide a candidate JSON or CSV file. If no
+file is uploaded, the app loads `C:\Users\Acer\Downloads\sample.json`.
+
+Use **Download candidate CSV template** to get a one-row template with the
+expected flat candidate columns. When a candidate CSV is uploaded, the app shows
+an auto-checked MoSCoW checklist and converts the CSV rows into editable JSON
+before scoring.
 
 The JSON editor lets you change any candidate field before validation. This is
 useful for testing examples such as:
@@ -169,14 +174,106 @@ useful for testing examples such as:
 - Very high stock grant.
 - Entry-level role with high experience.
 
+### Candidate CSV Template Columns
+
+```text
+uuid
+company
+companySlug
+title
+jobFamily
+jobFamilySlug
+level
+focusTag
+yearsOfExperience
+yearsAtCompany
+offerDate
+location
+locationSlug
+workArrangement
+exchangeRate
+baseSalary
+baseSalaryCurrency
+avgAnnualBonusValue
+bonusCurrency
+avgAnnualStockGrantValue
+stockGrantCurrency
+totalCompensation
+userCurrency
+vestingPercent1
+vestingPercent2
+vestingPercent3
+vestingPercent4
+```
+
+Candidate CSV checklist:
+
+- `Must`: Required columns, numeric compensation fields, and compensation math.
+- `Should`: Helpful context fields such as slugs, offer date, work arrangement, and focus tag.
+- `Won't`: Behavioral and trust signals are not expected in candidate CSV; use sidebar controls for those.
+
 ### Benchmark Data
 
 Use the second upload control to provide benchmark data as Excel or CSV. If no
 file is uploaded, the app loads
 `C:\Users\Acer\Downloads\validated_submissions.xlsx`.
 
+Use **Download CSV template** to get a ready-to-fill benchmark file with the
+expected columns and example PASS/REJECT rows. The upload control includes a
+tooltip describing the required data qualities: required columns, numeric
+compensation fields, PASS/FLAG/REJECT labels, enough PASS rows for Isolation
+Forest, and cohort fields for rolling IQR.
+
 The benchmark table is editable. Edits affect validation immediately, but only
 inside the running app. The original file is not changed.
+
+When you upload a replacement CSV/XLSX, the app shows an auto-checked MoSCoW
+readiness checklist for replacing `validated_submissions.xlsx` in the active
+session.
+
+### Benchmark CSV Template Columns
+
+```text
+submission_id
+company
+role
+level
+location
+jobFamilySlug
+locationSlug
+years_of_experience
+years_at_company
+base_salary
+bonus
+stock
+total_compensation
+currency
+offer_date
+workArrangement
+focusTag
+issues
+status
+```
+
+### Replacement Readiness Checklist
+
+The checklist uses MoSCoW labels:
+
+- `MUST`: Required for the upload to be trusted as a replacement dataset.
+- `SHOULD`: Strongly recommended for good statistical and ML quality.
+- `COULD`: Optional fields that improve model explanations.
+- `WONT`: Explicitly out of scope, such as overwriting the original file.
+
+Auto-checked requirements:
+
+- Required replacement columns are present.
+- Compensation and experience fields are numeric and non-negative.
+- Status labels use `PASS`, `FLAG`, or `REJECT` and include at least one `PASS`.
+- PASS row count is high enough for Isolation Forest training.
+- Cohort fields are present or derivable for rolling IQR.
+- Offer dates are parseable for time-aware validation.
+- Optional ML context columns such as `workArrangement` and `focusTag` are present.
+- Original `validated_submissions.xlsx` is not overwritten.
 
 ### Candidate Selector
 
