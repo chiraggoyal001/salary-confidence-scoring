@@ -1,604 +1,141 @@
-# Levels.fyi Crowdsourced Data Validation MVP
-
-This project is a local Streamlit MVP for testing the solution described in
-`solution_levels.fyi_hackathon.docx`. It validates crowdsourced compensation
-submissions with a four-layer funnel:
-
-1. Deterministic structural and spam checks.
-2. Rolling-window statistical validation with IQR bounds.
-3. Isolation Forest anomaly detection with SHAP explanations.
-4. Multiplicative trust scoring and routing.
-
-The app is built for fast local experimentation. It is not a production
-Kafka/Redis/Timescale deployment.
-
-## Current Status
-
-The MVP is implemented and verified locally.
-
-- App URL: `http://localhost:8501`
-- Test command: `.\.venv\Scripts\python.exe -m pytest -q`
-- Current test result: `16 passed`
-- Streamlit health endpoint: `http://localhost:8501/_stcore/health`
-
-## Is Isolation Forest Working?
-
-Yes. Layer 3 is working in this app when there are enough benchmark rows for
-training.
-
-The provided `validated_submissions.xlsx` has only 8 rows, with 4 PASS rows.
-That is too small for a useful Isolation Forest by itself. To make the MVP
-usable, the app expands benchmark data in memory using the "Synthetic benchmark
-target rows" control. The original Excel file is not modified.
-
-With the default app settings:
-
-- Synthetic benchmark target rows: `250`
-- Minimum rows for ML: `40`
-- ML contamination: `0.08`
-- SHAP required: `True`
-
-Layer 3 trains `sklearn.ensemble.IsolationForest` and uses `shap.TreeExplainer`
-for feature-level explanations.
-
-Verified against the real provided files:
-
+Salary Confidence Scoring
+A product exploration into improving trust in crowdsourced compensation data.
+Live demo: https://salary-confidence-scoring.streamlit.app/  
+Source code: https://github.com/chiraggoyal001/salary-confidence-scoring
+Overview
+Crowdsourced salary data is useful only when people can make reasonable comparisons across roles, levels, companies, locations, and compensation structures. Incorrect figures, duplicates, spam, and misleading submissions can weaken that trust. But an unusual salary is not automatically a false one: genuine compensation can vary substantially, especially for senior roles, equity-heavy packages, and less common job cohorts.
+Salary Confidence Scoring is a Streamlit MVP that explores how a salary-sharing platform could assess incoming compensation submissions, explain the signals behind an assessment, and route uncertain cases for review rather than treating every outlier as fraud.
+I built this as an independent product and technical prototype around a Levels.fyi-style use case. It is not affiliated with or endorsed by Levels.fyi, and it does not connect to, publish to, or remove submissions from Levels.fyi. The live demo is a standalone application for exploring the validation workflow.
+The product question
+How might a platform prioritise compensation submissions for acceptance or human review while reducing obvious data-quality problems without filtering out legitimate outliers?
+The product challenge is a trade-off between two types of error:
+False acceptance: unreliable data is allowed to influence compensation benchmarks.
+False rejection: a legitimate but unusual salary is held back or rejected.
+A single salary threshold is unlikely to handle this well. The prototype therefore combines several kinds of evidence and makes the suggested route inspectable.
+What the prototype does
+Accepts a candidate submission through JSON or CSV input.
+Accepts benchmark data in CSV or Excel format, with editable benchmark rows.
+Checks structural consistency and configurable suspicious-submission signals.
+Compares a submission with relevant compensation cohorts where the available data permits it.
+Uses Isolation Forest for multivariate anomaly detection when sufficient usable data and runtime support are available.
+Shows a final score, suggested route, issues, recommendations, layer-level details, cohort context, and available feature explanations.
+Supports batch scoring and downloadable results.
+Lets users change validation settings and inspect how inputs affect the outcome.
+The app is designed to make the reasoning inspectable, not to present a score as unquestionable truth.
+How the validation workflow is organised
 ```text
-benchmark_rows 8
-pass_rows 4
-final_score 100.0
-route PASS / Public
-layer_multipliers {'layer1': 1.0, 'layer2': 1.0, 'layer3': 1.0, 'user': 1.0}
-ml_status SHAP explanations available
+Candidate submission + benchmark data
+                  |
+                  v
+     1. Structural and spam checks
+                  |
+                  v
+      2. Cohort-based statistics
+                  |
+                  v
+     3. Multivariate anomaly detection
+                  |
+                  v
+        4. Trust-signal scoring
+                  |
+                  v
+      Score, explanation, suggested route
+          /             |             \
+   Pass / continue   Manual review   Quarantine
 ```
-
-Installed ML versions in the project virtual environment:
-
-```text
-shap 0.51.0
-sklearn 1.8.0
-```
-
-If you set synthetic rows below the minimum ML row threshold, the app will mark
-Layer 3 as unavailable instead of pretending the ML model ran.
-
-## Files
-
-```text
-app.py
-src/
-  data_io.py
-  synthetic_data.py
-  ui_config.py
-  validation_engine.py
-tests/
-  test_ui_contract.py
-  test_validation_engine.py
-requirements.txt
-README.md
-```
-
-### Main Responsibilities
-
-- `app.py`: Streamlit dashboard, uploads, editors, tabs, charts, and report UI.
-- `src/data_io.py`: JSON, Excel, CSV loading and benchmark normalization.
-- `src/synthetic_data.py`: In-memory synthetic expansion for sparse benchmark data.
-- `src/ui_config.py`: Sidebar and advanced control definitions.
-- `src/validation_engine.py`: Four-layer validation and scoring engine.
-- `tests/`: Regression tests for validation rules, routing, controls, and ML behavior.
-
-## Data Sources
-
-By default, the app preloads these files when they exist:
-
-```text
-C:\Users\Acer\Downloads\sample.json
-C:\Users\Acer\Downloads\validated_submissions.xlsx
-```
-
-You can replace both from the UI:
-
-- Upload a `.json` file for candidate submissions.
-- Upload `.xlsx`, `.xls`, or `.csv` for validated benchmark data.
-- Edit the JSON and benchmark table directly inside the app before scoring.
-
-The app accepts candidate JSON in either form:
-
-```json
-{
-  "uuid": "single-submission"
-}
-```
-
-or:
-
-```json
-[
-  { "uuid": "submission-1" },
-  { "uuid": "submission-2" }
-]
-```
-
-## Setup
-
-The project uses a local virtual environment at `.venv`.
-
-If `.venv` already exists, install or refresh dependencies with:
-
+1. Structural and behavioural checks
+The first layer looks for problems such as negative or inconsistent compensation values, tenure inconsistencies, invalid vesting splits, duplicates, unusually rapid submissions, and configurable bot or spam signals.
+A hard logical inconsistency is handled differently from a suspicious pattern that may have a legitimate explanation.
+2. Cohort-based statistical checks
+The prototype compares compensation against available benchmarks, prioritising relevant dimensions such as location, job family, role level, and other supported fields. It uses interquartile-range (IQR) bounds and broader cohort fallbacks when a narrowly defined group has too little data.
+An outlier is a reason to look closer—not proof that a salary is fake. Results depend on the coverage, recency, and quality of the benchmark data.
+3. Multivariate anomaly detection
+Isolation Forest looks for unusual combinations of compensation and job-context features. SHAP-based explanations are available when the runtime supports them; the app should not imply that an explanation was produced when that capability is unavailable.
+The prototype can expand sparse benchmark data synthetically in memory for experimentation. Synthetic rows help exercise the workflow but are not verified salary records and cannot demonstrate real-world detection accuracy.
+4. Trust signals and routing
+The final assessment combines the preceding signals with configurable contributor-related inputs, such as supporting-document status, work-email domain match, prior approved submissions, account history, and other available risk indicators.
+These inputs are experimental. They can be missing, spoofed, or unfairly correlated with a contributor's circumstances, so they should not independently determine whether a salary is genuine.
+The current prototype uses configurable routing bands:
+Score	Suggested route	Intended handling
+90 or higher	`PASS / Public`	Eligible to proceed under the prototype's rules
+50 to below 90	`FLAG / Manual Review`	Hold for further review
+Below 50	`REJECT / Quarantine`	Isolate for further investigation
+These are prototype thresholds, not validated production policy. The score is a configurable heuristic—not a calibrated probability that a submission is genuine.
+Product decisions and trade-offs
+Decision	Reasoning	Trade-off to validate
+Use multiple validation layers	Different checks catch different failure modes; no single signal is sufficient.	More layers can add complexity and make calibration harder.
+Compare within cohorts	Salary expectations differ by role, level, company, and location.	Narrow cohorts can be sparse or unrepresentative.
+Treat statistical outliers as signals	Unusual compensation can be legitimate.	More manual review may be needed to avoid false rejection.
+Include explanations and layer details	Reviewers need context to understand a suggested route.	Explanations can be incomplete or misleading if the underlying data is weak.
+Keep the MVP local-first and interactive	Makes it possible to inspect inputs, benchmark data, and scoring behaviour without production infrastructure.	It does not provide production ingestion, moderation operations, or platform integration.
+Use synthetic benchmark expansion for experimentation	Allows the workflow to be exercised when the available sample is small.	Synthetic data cannot replace independently labelled real-world examples.
+Product evaluation plan
+The next step is to test whether the workflow improves review decisions—not simply to add more model complexity.
+I would evaluate it against a simple rules-only baseline using a privacy-safe dataset with independently reviewed labels.
+Product question	Measure
+Are flagged submissions actually problematic?	Precision among flagged submissions
+How many known problematic submissions are missed?	Recall on a labelled holdout set
+Are legitimate salaries being held or rejected too often?	False-positive rate, including breakdowns by relevant cohort
+Does the workflow reduce review effort?	Manual-review rate and median review time
+Are decisions consistent across cohorts?	Error rates by role, level, location, and other appropriate groups
+Can contributors and reviewers challenge incorrect decisions?	Reviewer agreement and appeal-overturn rate
+Evaluation should use a leakage-resistant holdout, document how labels were assigned, and compare results with the rules-only baseline. I have not established production detection accuracy, fraud-detection lift, or an improvement in published salary data; those outcomes require further evaluation.
+Current scope and limitations
+This is a working MVP for exploration, not a production moderation service.
+It is not integrated with Levels.fyi and cannot publish, hide, or remove records from that platform.
+The score is not a calibrated probability or proof of fraud.
+Statistical checks depend on benchmark coverage, recency, and quality.
+Synthetic benchmark expansion is for workflow testing, not evidence of model performance.
+Isolation Forest and SHAP outputs depend on adequate data and runtime support.
+Trust signals require careful privacy, security, fairness, and abuse-resistance review before production use.
+The current project has not demonstrated production outcomes or measured improvement to a live compensation dataset.
+Run locally
+Requirements
+The repository's documented setup uses Python 3.12. Install the dependencies listed in `requirements.txt`.
+Windows (PowerShell)
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-If you need to recreate it from scratch:
-
-```powershell
+git clone https://github.com/chiraggoyal001/salary-confidence-scoring.git
+cd salary-confidence-scoring
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
-```
-
-The trusted-host flags were used because this machine had certificate-chain
-issues when contacting PyPI.
-
-## Run The App
-
-```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
-
-Then open:
-
+macOS / Linux
+```bash
+git clone https://github.com/chiraggoyal001/salary-confidence-scoring.git
+cd salary-confidence-scoring
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m streamlit run app.py
+```
+Open `http://localhost:8501`.
+Inputs
+The app supports candidate JSON or CSV uploads and benchmark CSV or Excel uploads. It also supports built-in fallback data and optional local defaults, as described in the app. Use the downloadable templates to check the expected input format.
+Do not upload private compensation records or personally identifiable information unless you have permission to use them. Review data handling carefully before using sensitive real-world information.
+Tests
+Run the test suite from the repository root:
+```bash
+python -m pytest -q
+```
+Passing tests help check expected behaviour, but do not establish real-world detection accuracy.
+Project structure
 ```text
-http://localhost:8501
+.
+├── app.py
+├── requirements.txt
+├── validated_submissions_300.csv
+├── src/
+│   ├── benchmark_quality.py
+│   ├── csv_contract.py
+│   ├── data_io.py
+│   ├── synthetic_data.py
+│   ├── ui_config.py
+│   └── validation_engine.py
+└── tests/
 ```
-
-The app currently runs on port `8501`.
-
-## Using The Dashboard
-
-### Candidate Submission
-
-Use the first upload control to provide a candidate JSON or CSV file. If no
-file is uploaded, the app loads `C:\Users\Acer\Downloads\sample.json`.
-
-Use **Download candidate CSV template** to get a one-row template with the
-expected flat candidate columns. When a candidate CSV is uploaded, the app shows
-an auto-checked MoSCoW checklist and converts the CSV rows into editable JSON
-before scoring.
-
-The JSON editor lets you change any candidate field before validation. This is
-useful for testing examples such as:
-
-- Negative base salary.
-- Total compensation less than base + bonus + stock.
-- Years at company greater than total experience.
-- Very high stock grant.
-- Entry-level role with high experience.
-
-### Candidate CSV Template Columns
-
-```text
-uuid
-company
-companySlug
-title
-jobFamily
-jobFamilySlug
-level
-focusTag
-yearsOfExperience
-yearsAtCompany
-offerDate
-location
-locationSlug
-workArrangement
-exchangeRate
-baseSalary
-baseSalaryCurrency
-avgAnnualBonusValue
-bonusCurrency
-avgAnnualStockGrantValue
-stockGrantCurrency
-totalCompensation
-userCurrency
-vestingPercent1
-vestingPercent2
-vestingPercent3
-vestingPercent4
-```
-
-Candidate CSV checklist:
-
-- `Must`: Required columns, numeric compensation fields, and compensation math.
-- `Should`: Helpful context fields such as slugs, offer date, work arrangement, and focus tag.
-- `Won't`: Behavioral and trust signals are not expected in candidate CSV; use sidebar controls for those.
-
-### Benchmark Data
-
-Use the second upload control to provide benchmark data as Excel or CSV. If no
-file is uploaded, the app loads
-`C:\Users\Acer\Downloads\validated_submissions.xlsx`.
-
-Use **Download CSV template** to get a ready-to-fill benchmark file with the
-expected columns and example PASS/REJECT rows. The upload control includes a
-tooltip describing the required data qualities: required columns, numeric
-compensation fields, PASS/FLAG/REJECT labels, enough PASS rows for Isolation
-Forest, and cohort fields for rolling IQR.
-
-The benchmark table is editable. Edits affect validation immediately, but only
-inside the running app. The original file is not changed.
-
-When you upload a replacement CSV/XLSX, the app shows an auto-checked MoSCoW
-readiness checklist for replacing `validated_submissions.xlsx` in the active
-session.
-
-### Benchmark CSV Template Columns
-
-```text
-submission_id
-company
-role
-level
-location
-jobFamilySlug
-locationSlug
-years_of_experience
-years_at_company
-base_salary
-bonus
-stock
-total_compensation
-currency
-offer_date
-workArrangement
-focusTag
-issues
-status
-```
-
-### Replacement Readiness Checklist
-
-The checklist uses MoSCoW labels:
-
-- `MUST`: Required for the upload to be trusted as a replacement dataset.
-- `SHOULD`: Strongly recommended for good statistical and ML quality.
-- `COULD`: Optional fields that improve model explanations.
-- `WONT`: Explicitly out of scope, such as overwriting the original file.
-
-Auto-checked requirements:
-
-- Required replacement columns are present.
-- Compensation and experience fields are numeric and non-negative.
-- Status labels use `PASS`, `FLAG`, or `REJECT` and include at least one `PASS`.
-- PASS row count is high enough for Isolation Forest training.
-- Cohort fields are present or derivable for rolling IQR.
-- Offer dates are parseable for time-aware validation.
-- Optional ML context columns such as `workArrangement` and `focusTag` are present.
-- Original `validated_submissions.xlsx` is not overwritten.
-
-### Candidate Selector
-
-If the JSON contains an array of submissions, a selector appears so you can
-inspect one candidate at a time. The Batch Results tab still scores all
-submissions.
-
-## Sidebar Controls
-
-These fields are missing from `sample.json`, so the app exposes them as
-interactive controls.
-
-### Behavioral Spam Controls
-
-- IP submissions in 5 minutes.
-- Form completion seconds.
-- Exact duplicates within 1 hour.
-- Sequential salary padding.
-- Distinct locations per session.
-- Distinct titles per session.
-- Honeypot field filled.
-
-These feed Layer 1. Hard spam signals can auto-reject the submission.
-
-### User Trust Controls
-
-- Offer letter / W-2 / paystub uploaded.
-- Work email domain matches company.
-- LinkedIn or GitHub SSO.
-- Previously approved submissions.
-- Account age in days.
-- Historical reject ratio.
-- VPN / data-center IP risk.
-
-These feed `M(user)` in Layer 4.
-
-### Advanced Model Settings
-
-- Rolling window days, default `90`.
-- IQR multiplier, default `1.618`.
-- Synthetic benchmark target rows, default `250`.
-- ML contamination, default `0.08`.
-- Random seed, default `42`.
-- Strict currency feasibility.
-- Minimum rows for ML, default `40`.
-- Require real SHAP explanations, default `True`.
-
-## Validation Layers
-
-### Layer 1: Deterministic Gate
-
-Layer 1 checks structural garbage and malicious activity before statistical or
-ML scoring.
-
-Auto-reject examples:
-
-- `totalCompensation < baseSalary + avgAnnualBonusValue + avgAnnualStockGrantValue`
-- `yearsAtCompany > yearsOfExperience`
-- Negative base, stock, bonus, or total compensation.
-- Invalid vesting schedule where percentages do not sum to 100.
-- IP velocity greater than 3 submissions in 5 minutes.
-- Form completion under 3 seconds.
-- Exact duplicate count greater than 0.
-- Sequential salary padding.
-- Session spoofing across more than 3 locations or titles.
-- Honeypot field filled.
-
-Review-flag examples:
-
-- Total experience greater than 50 years.
-- Stock grant at least 10 times base salary unless C-suite.
-- Entry-level title or level with more than 10 years of experience.
-
-Hard rejects set:
-
-```text
-M(layer1) = 0.0
-```
-
-Review flags set:
-
-```text
-M(layer1) = 0.85
-```
-
-### Layer 2: Rolling Statistical Validation
-
-Layer 2 evaluates the candidate against recent benchmark compensation data.
-
-Default behavior:
-
-- Uses a trailing 90-day window.
-- Prefers cohort match by `locationSlug + jobFamilySlug + level`.
-- Falls back to broader cohorts if exact matches are too sparse.
-- Computes median, Q1, Q3, IQR, EWMA, lower bound, and upper bound.
-
-Default bounds:
-
-```text
-lower = Q1 - 1.618 * IQR
-upper = Q3 + 1.618 * IQR
-```
-
-Inside bounds:
-
-```text
-M(layer2) = 1.0
-```
-
-Outside bounds:
-
-```text
-M(layer2) decays with distance from the nearest bound
-```
-
-### Layer 3: Isolation Forest And SHAP
-
-Layer 3 handles multivariate anomalies. It uses:
-
-- `sklearn.ensemble.IsolationForest`
-- One-hot encoded categorical fields.
-- Numeric compensation and experience fields.
-- `shap.TreeExplainer` for feature explanations.
-
-Feature inputs include:
-
-- Years of experience.
-- Years at company.
-- Base salary.
-- Bonus.
-- Stock.
-- Total compensation.
-- Company.
-- Title.
-- Job family slug.
-- Level.
-- Location slug.
-- Work arrangement.
-- Focus tag.
-
-If SHAP is required and unavailable, Layer 3 reports a visible warning and uses
-a neutral multiplier instead of faking explanations.
-
-### Layer 4: Multiplicative Trust Scoring
-
-Final score:
-
-```text
-100 * M(layer1) * M(layer2) * M(layer3) * M(user)
-```
-
-User trust starts at `1.0` and applies:
-
-```text
-+0.30 proof uploaded
-+0.15 domain match
-+0.05 social SSO
-+0.10 at least 3 approved prior submissions
-+0.05 account older than one year
--0.40 reject ratio greater than 30%
--0.20 VPN / data-center IP risk
-```
-
-The final user multiplier is capped:
-
-```text
-0.5 <= M(user) <= 1.3
-```
-
-## Routing
-
-```text
-Score >= 90    PASS / Public
-Score 50-89    FLAG / Manual Review
-Score < 50     REJECT / Quarantine
-```
-
-## App Tabs
-
-### Report
-
-Shows:
-
-- Final score.
-- Route.
-- Confidence.
-- Candidate total compensation.
-- Score gauge.
-- Issues and recommendations.
-
-### Layer Details
-
-Shows:
-
-- Layer multiplier bar chart.
-- Layer 2 cohort statistics.
-- Layer 3 ML / SHAP status and explanations.
-- Trust multiplier components.
-
-### Benchmark Charts
-
-Shows:
-
-- Histogram and box plot of benchmark compensation.
-- Candidate marker on the distribution.
-- Experience vs compensation scatter chart.
-
-### Batch Results
-
-Scores every candidate when the uploaded JSON contains an array. Includes a
-download button for validation results as JSON.
-
-## Verification
-
-Run all tests:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-Expected:
-
-```text
-16 passed
-```
-
-Compile-check Python files:
-
-```powershell
-.\.venv\Scripts\python.exe -m py_compile app.py src\data_io.py src\synthetic_data.py src\ui_config.py src\validation_engine.py
-```
-
-Streamlit smoke test:
-
-```powershell
-@'
-from streamlit.testing.v1 import AppTest
-at = AppTest.from_file("app.py")
-at.run(timeout=90)
-print("exceptions", len(at.exception))
-print("tabs", len(at.tabs))
-print("metrics", len(at.metric))
-'@ | .\.venv\Scripts\python.exe -
-```
-
-Expected:
-
-```text
-exceptions 0
-tabs 4
-metrics 4
-```
-
-Server health check:
-
-```powershell
-Invoke-WebRequest -Uri "http://localhost:8501/_stcore/health" -UseBasicParsing
-```
-
-Expected content:
-
-```text
-ok
-```
-
-## Troubleshooting
-
-### Layer 3 Says Not Enough Benchmark Rows
-
-Increase "Synthetic benchmark target rows" in the sidebar, or lower "Minimum
-rows for ML" for experimentation.
-
-Recommended demo values:
-
-```text
-Synthetic benchmark target rows = 250
-Minimum rows for ML = 40
-```
-
-### Layer 3 Says SHAP Is Unavailable
-
-Install dependencies in the project venv:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
-```
-
-Then restart Streamlit.
-
-### App Does Not Open On Port 8501
-
-Check whether the port is already in use:
-
-```powershell
-Get-NetTCPConnection -LocalPort 8501 -ErrorAction SilentlyContinue
-```
-
-Run on another port:
-
-```powershell
-.\.venv\Scripts\python.exe -m streamlit run app.py --server.port=8502
-```
-
-### Global Anaconda Environment Fails Imports
-
-This machine had a broken global Anaconda `numpy`/`pandas` pairing. Use the
-project venv instead:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m streamlit run app.py
-```
-
-## Notes And Limitations
-
-- Synthetic benchmark data is generated in memory only.
-- Uploaded/edited benchmark rows are not written back to the original Excel file.
-- The MVP uses local Streamlit state, not production queues or databases.
-- Layer 2 approximates a time-series database with the active benchmark table.
-- Layer 3 explanations depend on SHAP runtime support.
-- The original workspace is not a git repository.
-
-
-## Links to Our Approach
-- https://docs.google.com/document/d/1vV-a-LDN07vghi3p6PLRdNuMMi9vdupSwMY_ThO7EXQ/edit?usp=drive_link
-
-## Demo Link
-- https://drive.google.com/file/d/1YLst3ryzfmfOvnj88Oext1GCSqi2ZDZh/view?usp=sharing
+Links
+Live demo
+GitHub repository
+Report an issue or suggest an improvement
+---
+Independent prototype exploring crowdsourced compensation data quality. Levels.fyi is referenced only to describe the use case; this project is not affiliated with or endorsed by Levels.fyi.
